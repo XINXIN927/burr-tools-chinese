@@ -1,0 +1,22 @@
+*#
+*~
+admin/
+doxygen.cfg
+src/burrTxt
+src/burrTxt2
+src/gui/burrGui
+src/help/helpviewer
+src/unitTest
+build/
+GPATH
+GRTAGS
+GTAGS
+
+# Meson subprojects (keep only .wrap files in git)
+subprojects/*
+!subprojects/*.wrap
+
+# macOS build artifacts
+*.dmg
+*.app
+dmg_contents/
