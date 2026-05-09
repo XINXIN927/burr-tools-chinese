@@ -74,7 +74,7 @@ class imageExport_c : public LFl_Double_Window, public VoxelViewCallbacks {
     LFl_Input *Fname, *Pname;
     LFl_Int_Input *NumPages;
     LFl_Box *status;
-    LFl_Radio_Button *ExpShape, *ExpProblem, *ExpAssembly, *ExpSolution, *ExpSolutionDisassm;
+    LFl_Radio_Button *ExpShape, *ExpProblem, *ExpAssembly, *ExpSolution, *ExpSolutionDisassm, *ExpCSV;
     LFl_Check_Button *DimStatic;
     LFl_Button *BtnStart, *BtnAbbort;
     PieceSelector * ShapeSelect;

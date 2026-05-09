@@ -25,6 +25,7 @@
 #include "Layouter.h"
 #include "blocklistgroup.h"
 
+#include "../lib/voxel.h"
 #include "../lib/puzzle.h"
 #include "../lib/problem.h"
 #include "../lib/disassembly.h"
@@ -405,6 +406,129 @@ void imageExport_c::PostDraw(void) {
 }
 
 
+/* CSV export helper: collect individual piece indices in DFS leaf order
+ * each step records exactly one piece becoming fully separated
+ */
+static void collectCsvSteps(const separation_c * tree, std::vector<unsigned int> & steps) {
+  if (!tree) return;
+
+  /* removed side: if single piece → record it, otherwise recurse */
+  if (!tree->getRemoved()) {
+    const state_c * last = tree->getState(tree->getMoves());
+    for (unsigned int i = 0; i < tree->getPieceNumber(); i++)
+      if (last->pieceRemoved(i))
+        steps.push_back(tree->getPieceName(i));
+  } else {
+    collectCsvSteps(tree->getRemoved(), steps);
+  }
+
+  /* left side: if single piece → record it, otherwise recurse */
+  if (!tree->getLeft()) {
+    const state_c * last = tree->getState(tree->getMoves());
+    for (unsigned int i = 0; i < tree->getPieceNumber(); i++)
+      if (!last->pieceRemoved(i))
+        steps.push_back(tree->getPieceName(i));
+  } else {
+    collectCsvSteps(tree->getLeft(), steps);
+  }
+}
+
+/* write CSV with three category tables (1+5, 2+4, 3+3), each row has exactly getNumberOfPieces() columns */
+static void writeCsvTables(FILE * f, const puzzle_c * puz, const problem_c * pr) {
+
+  struct SolData {
+    unsigned int num;
+    std::vector<unsigned int> order;
+  };
+  std::vector<SolData> cats[3];
+
+  for (unsigned int s = 0; s < pr->getNumberOfSavedSolutions(); s++) {
+    const solution_c * sol = pr->getSavedSolution(s);
+    const separation_c * tree = sol ? sol->getDisassembly() : 0;
+    if (!tree) continue;
+
+    unsigned int fc = 0;
+    if (tree->getRemoved())
+      fc = tree->getRemoved()->getPieceNumber();
+    else {
+      const state_c * last = tree->getState(tree->getMoves());
+      for (unsigned int i = 0; i < tree->getPieceNumber(); i++)
+        if (last->pieceRemoved(i))
+          fc++;
+    }
+    if (fc < 1 || fc > 3) continue;
+
+    std::vector<unsigned int> order;
+    collectCsvSteps(tree, order);
+
+    SolData sd;
+    sd.num = s + 1;
+    sd.order = order;
+    cats[fc-1].push_back(sd);
+  }
+
+  unsigned int numPieces = pr->getNumberOfPieces();
+
+  const char * catLabels[] = {
+    "Table 1: \xe7\xac\xac\xe4\xb8\x80\xe6\xad\xa5\xe6\x8b\x86\xe5\x87\xba 1 \xe6\xa0\xb9\xe6\x9f\xb1\xe5\xad\x90 (1+5)",
+    "Table 2: \xe7\xac\xac\xe4\xb8\x80\xe6\xad\xa5\xe6\x8b\x86\xe5\x87\xba 2 \xe6\xa0\xb9\xe6\x9f\xb1\xe5\xad\x90 (2+4)",
+    "Table 3: \xe7\xac\xac\xe4\xb8\x80\xe6\xad\xa5\xe6\x8b\x86\xe5\x87\xba 3 \xe6\xa0\xb9\xe6\x9f\xb1\xe5\xad\x90 (3+3)"
+  };
+
+  for (int c = 0; c < 3; c++) {
+    if (cats[c].empty()) {
+      fprintf(f, "%s\n(\xe6\x97\xa0\xe8\xa7\xa3\xe6\xb3\x95)\n\n", catLabels[c]);
+      continue;
+    }
+
+    fprintf(f, "%s\n", catLabels[c]);
+    fprintf(f, "\xe8\xa7\xa3\xe6\xb3\x95\xe7\xbc\x96\xe5\x8f\xb7");
+    for (unsigned int st = 0; st < numPieces; st++)
+      fprintf(f, ",\xe6\xad\xa5\xe9\xaa\xa4%u", st + 1);
+    fprintf(f, "\n");
+
+    for (size_t si = 0; si < cats[c].size(); si++) {
+      fprintf(f, "%u", cats[c][si].num);
+      for (unsigned int st = 0; st < numPieces; st++) {
+        fprintf(f, ",");
+        if (st < cats[c][si].order.size()) {
+          unsigned int pieceIdx = cats[c][si].order[st];
+          unsigned int partId = pr->getPartIdToPieceId(pieceIdx);
+          unsigned int shapeIdx = pr->getShapeIdOfPart(partId);
+          const std::string & customName = puz->getShape(shapeIdx)->getName();
+          if (customName.empty())
+            fprintf(f, "S%u", shapeIdx + 1);
+          else
+            fprintf(f, "%s", customName.c_str());
+        }
+      }
+      fprintf(f, "\n");
+    }
+
+    /* statistics row for this category */
+    const char * statLabels[] = {
+      "\xe7\xbb\x9f\xe8\xae\xa1\xef\xbc\x881+5\xef\xbc\x89",
+      "\xe7\xbb\x9f\xe8\xae\xa1\xef\xbc\x882+4\xef\xbc\x89",
+      "\xe7\xbb\x9f\xe8\xae\xa1\xef\xbc\x883+3\xef\xbc\x89"
+    };
+    fprintf(f, "%s", statLabels[c]);
+    fprintf(f, ",%zu", cats[c].size());
+    for (unsigned int st = 1; st < numPieces; st++)
+      fprintf(f, ",");
+    fprintf(f, "\n\n");
+  }
+
+  /* grand total row */
+  unsigned int grandTotal = 0;
+  for (int c = 0; c < 3; c++)
+    grandTotal += cats[c].size();
+  fprintf(f, "\xe6\x80\xbb\xe8\xae\xa1");
+  fprintf(f, ",%u", grandTotal);
+  for (unsigned int st = 1; st < numPieces; st++)
+    fprintf(f, ",");
+  fprintf(f, "\n");
+}
+
 static void cb_ImageExportExport_stub(Fl_Widget* /*o*/, void* v) { ((imageExport_c*)(v))->cb_Export(); }
 void imageExport_c::cb_Export(void) {
 
@@ -473,6 +597,30 @@ void imageExport_c::cb_Export(void) {
       images.push_back(new ImageInfo(puzzle, getColorMode(),
             pr->getShapeIdOfPart(p), view3D->getView()));
 
+  } else if (ExpCSV->value()) {
+
+    unsigned int prob = ProblemSelect->getSelection();
+    problem_c * pr = puzzle->getProblem(prob);
+
+    if (pr->getNumberOfSavedSolutions() == 0) return;
+
+    char name[1000];
+    if (Pname->value() && Pname->value()[0] && Pname->value()[strlen(Pname->value())-1] != '/')
+      snprintf(name, 1000, "%s/%s_solutions.csv", Pname->value(), Fname->value());
+    else
+      snprintf(name, 1000, "%s%s_solutions.csv", Pname->value(), Fname->value());
+
+    FILE * f = fopen(name, "w");
+    if (!f) return;
+
+    writeCsvTables(f, puzzle, pr);
+
+    fclose(f);
+
+    status->label("CSV \xe5\xaf\xbc\xe5\x87\xba\xe5\xae\x8c\xe6\x88\x90");
+
+    return;
+
   } else
 
     return;
@@ -501,6 +649,12 @@ void imageExport_c::cb_Update3DView(void) {
       if (pr->getSavedSolution(0)->getDisassembly()) solutions = true;
     }
 
+  if (!solutions) {
+    ExpCSV->deactivate();
+    if (ExpCSV->value())
+      ExpAssembly->setonly();
+  } else
+    ExpCSV->activate();
   if (!solutions) {
     ExpSolutionDisassm->deactivate();
     if (ExpSolutionDisassm->value())
@@ -537,6 +691,8 @@ void imageExport_c::cb_Update3DView(void) {
   } else if (ExpSolution->value()) {
     view3D->getView()->showAssembly(puzzle->getProblem(ProblemSelect->getSelection()), 0);
   } else if (ExpSolutionDisassm->value()) {
+    view3D->getView()->showAssembly(puzzle->getProblem(ProblemSelect->getSelection()), 0);
+  } else if (ExpCSV->value()) {
     view3D->getView()->showAssembly(puzzle->getProblem(ProblemSelect->getSelection()), 0);
   } else if (ExpProblem->value() && pr->resultValid()) {
     view3D->getView()->showSingleShape(puzzle, pr->getResultId());
@@ -646,7 +802,7 @@ imageExport_c::imageExport_c(puzzle_c * p) : LFl_Double_Window(false), puzzle(p)
     SzLetterLand = new LFl_Radio_Button("Letter 横排", 0, y++, 5, 1);
     SzLetterLand->callback(cb_ImageExportSzUpdate_stub, this);
 
-    SzManual = new LFl_Radio_Button("manual", 0, y++, 5, 1);
+    SzManual = new LFl_Radio_Button("自定义", 0, y++, 5, 1);
     SzManual->value(1);
     SzManual->callback(cb_ImageExportSzUpdate_stub, this);
 
@@ -684,10 +840,10 @@ imageExport_c::imageExport_c(puzzle_c * p) : LFl_Double_Window(false), puzzle(p)
   {
     fr = new LFl_Frame(0, 3, 2, 1);
 
-    (new LFl_Box("File name", 0, 0))->stretchLeft();
-    (new LFl_Box("Path", 0, 1))->stretchLeft();
-    (new LFl_Box("Number of files", 0, 2, 3, 1))->stretchLeft();
-    (new LFl_Box("Number of images", 0, 3, 3, 1))->stretchLeft();
+    (new LFl_Box("文件名", 0, 0))->stretchLeft();
+    (new LFl_Box("路径", 0, 1))->stretchLeft();
+    (new LFl_Box("文件数量", 0, 2, 3, 1))->stretchLeft();
+    (new LFl_Box("图片数量", 0, 3, 3, 1))->stretchLeft();
 
     (new LFl_Box(1, 0))->setMinimumSize(5, 0);
     (new LFl_Box(3, 0))->setMinimumSize(5, 0);
@@ -696,6 +852,26 @@ imageExport_c::imageExport_c(puzzle_c * p) : LFl_Double_Window(false), puzzle(p)
     Fname->value("test");
     Fname->weight(1, 0);
     Pname = new LFl_Input(2, 1, 3, 1);
+#ifdef _WIN32
+    {
+      const char * userprofile = getenv("USERPROFILE");
+      if (userprofile) {
+        char desktopPath[1000];
+        snprintf(desktopPath, sizeof(desktopPath), "%s/Desktop", userprofile);
+        Pname->value(desktopPath);
+      }
+    }
+#else
+    {
+      const char * home = getenv("HOME");
+      if (home) {
+        char desktopPath[1000];
+        snprintf(desktopPath, sizeof(desktopPath), "%s/Desktop", home);
+        Pname->value(desktopPath);
+      }
+    }
+#endif
+
     NumPages = new LFl_Int_Input(4, 2);
     new LFl_Int_Input(4, 3);
 
@@ -709,20 +885,22 @@ imageExport_c::imageExport_c(puzzle_c * p) : LFl_Double_Window(false), puzzle(p)
 
     fr = new LFl_Frame(0, 4, 2, 1);
 
-    ExpShape = new LFl_Radio_Button("Export Shape", 0, 0);
-    ExpProblem = new LFl_Radio_Button("Export Problem", 0, 1);
-    ExpAssembly = new LFl_Radio_Button("Export Assembly", 0, 2);
-    ExpSolution = new LFl_Radio_Button("Export Solution (Assembly)", 0, 3);
-    ExpSolutionDisassm = new LFl_Radio_Button("Export Solution (Disassembly)", 0, 4);
+    ExpShape = new LFl_Radio_Button("导出形状", 0, 0);
+    ExpProblem = new LFl_Radio_Button("导出问题", 0, 1);
+    ExpAssembly = new LFl_Radio_Button("导出组装", 0, 2);
+    ExpSolution = new LFl_Radio_Button("导出解法（组装）", 0, 3);
+    ExpSolutionDisassm = new LFl_Radio_Button("导出解法（拆解）", 0, 4);
+    ExpCSV = new LFl_Radio_Button("导出所有解法（CSV）", 0, 5);
     ExpSolution->setonly();
 
-    (new LFl_Box(0, 5))->weight(0, 1);
+    (new LFl_Box(0, 6))->weight(0, 1);
 
     ExpShape->callback(cb_ImageExport3DUpdate_stub, this);
     ExpProblem->callback(cb_ImageExport3DUpdate_stub, this);
     ExpAssembly->callback(cb_ImageExport3DUpdate_stub, this);
     ExpSolution->callback(cb_ImageExport3DUpdate_stub, this);
     ExpSolutionDisassm->callback(cb_ImageExport3DUpdate_stub, this);
+    ExpCSV->callback(cb_ImageExport3DUpdate_stub, this);
 
     fr->end();
   }
@@ -756,11 +934,11 @@ imageExport_c::imageExport_c(puzzle_c * p) : LFl_Double_Window(false), puzzle(p)
     status->pitch(7);
     status->align(FL_ALIGN_LEFT | FL_ALIGN_INSIDE);
 
-    BtnStart = new LFl_Button("Export image(s)", 1, 0);
+    BtnStart = new LFl_Button("导出图片", 1, 0);
     BtnStart->pitch(7);
     BtnStart->callback(cb_ImageExportExport_stub, this);
 
-    BtnAbbort = new LFl_Button("Abort", 2, 0);
+    BtnAbbort = new LFl_Button("取消", 2, 0);
     BtnAbbort->pitch(7);
     BtnAbbort->callback(cb_ImageExportAbort_stub, this);
 
