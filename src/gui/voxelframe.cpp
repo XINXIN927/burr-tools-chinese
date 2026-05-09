@@ -1579,6 +1579,18 @@ void voxelFrame_c::draw() {
 
 int voxelFrame_c::handle(int event) {
 
+  /* handle mouse wheel zoom directly inside the GL widget */
+  if (event == FL_MOUSEWHEEL) {
+    if (Fl::e_dy < 0)
+      size *= 1.2;
+    else
+      size /= 1.2;
+    if (size < 0.2) size = 0.2;
+    if (size > 50.0) size = 50.0;
+    redraw();
+    return 1;
+  }
+
   if (Fl_Gl_Window::handle(event))
     return 1;
 

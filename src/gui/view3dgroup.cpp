@@ -71,14 +71,6 @@ int LView3dGroup::handle(int event) {
 
   Fl_Group::handle(event);
 
-  switch(event)
-  {
-    case FL_MOUSEWHEEL:
-      slider->value(slider->value() + 0.1*Fl::e_dy);
-      View3D->setSize(exp(6-slider->value()));
-      return 1;
-  }
-
   return 0;
 }
 
