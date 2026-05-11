@@ -132,13 +132,16 @@ public:
   void cb_transform(long task);
 };
 
+class mainWindow_c;
+
 class ToolTabContainer : public layouter_c {
 
   ToolTab * tt;
+  mainWindow_c * mw;
 
   public:
 
-  ToolTabContainer(int x, int y, int w, int h, const guiGridType_c * ggt);
+  ToolTabContainer(int x, int y, int w, int h, const guiGridType_c * ggt, mainWindow_c * mw = nullptr);
 
   void setVoxelSpace(puzzle_c * puz, unsigned int sh) { if (tt) tt->setVoxelSpace(puz, sh); }
   bool operationToAll(void) { if (tt) return tt->operationToAll(); else return false; }

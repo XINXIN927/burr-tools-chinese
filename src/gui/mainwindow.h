@@ -21,6 +21,8 @@
 #ifndef __MAINWINDOW_H__
 #define __MAINWINDOW_H__
 
+#include <string>
+
 #include "Images.h"
 
 #include "Layouter.h"
@@ -194,6 +196,12 @@ public:
    */
   void update(void);
 
+  /* auto-save / crash recovery */
+  std::string getAutoSavePath(void) const;
+  void autoSave(void);
+  void clearAutoSave(void);
+  void tryAutoSaveRecover(void);
+
   /* return an index into the main menu array with the given text */
   int findMenuEntry(const char * txt);
 
@@ -273,6 +281,9 @@ public:
   void cb_SaveAs(void);
   void cb_Convert(void);
   void cb_AssembliesToShapes(void);
+  void cb_InsertStdShape(void);
+  void cb_InsertRotShape(void);
+  void cb_CreateIshidaPiece(int code);
   void cb_Quit(void);
   void cb_About(void);
   void cb_Help(void);

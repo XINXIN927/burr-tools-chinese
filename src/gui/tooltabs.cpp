@@ -25,7 +25,10 @@
 #include "../lib/voxel.h"
 #include "WindowWidgets.h"
 #include "guigridtype.h"
+#include "mainwindow.h"
 #include <stdlib.h>
+
+#define SZ_GAP 5
 
 #include "FL/fl_ask.H"
 
@@ -1317,14 +1320,117 @@ void ToolTab_4::cb_transform(long task) {
 
 
 
+// Stubs for 锁形 tab buttons
+static void cb_lock_std_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_InsertStdShape(); }
+static void cb_lock_rot_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_InsertRotShape(); }
+
+// Helper struct for 石野码 tab callbacks
+struct IshidaTabData_c {
+  LFl_Input * inp;
+  LFl_Output * binOut;
+  mainWindow_c * mw;
+  void updateBin(void) {
+    int c = atoi(inp->value());
+    if (c < 0 || c > 4095) c = 0;
+    char buf[16];
+    for (int i = 0; i < 12; i++)
+      buf[i] = (c & (1 << (11-i))) ? '1' : '0';
+    buf[12] = 0;
+    binOut->value(buf);
+  }
+  void setCode(int c) {
+    char buf[8];
+    snprintf(buf, 8, "%i", c);
+    inp->value(buf);
+    updateBin();
+  }
+};
+static void cb_ishida_input(Fl_Widget*, void*v) { ((IshidaTabData_c*)v)->updateBin(); }
+static void cb_ishida_p0(Fl_Widget*, void*v) { ((IshidaTabData_c*)v)->setCode(0); }
+static void cb_ishida_p1(Fl_Widget*, void*v) { ((IshidaTabData_c*)v)->setCode(1023); }
+static void cb_ishida_gen(Fl_Widget*, void*v) {
+  IshidaTabData_c * d = (IshidaTabData_c*)v;
+  int code = atoi(d->inp->value());
+  if (code < 0 || code > 4095) code = 0;
+  d->mw->cb_CreateIshidaPiece(code);
+}
+
 static void cb_ToolTabContainer_stub(Fl_Widget* /*o*/, void*v) {
   ToolTabContainer *vv = (ToolTabContainer*)v;
   vv->do_callback(vv, vv->user_data());
 }
 
-ToolTabContainer::ToolTabContainer(int x, int y, int w, int h, const guiGridType_c * ggt) : layouter_c(x, y, w, h) {
+ToolTabContainer::ToolTabContainer(int x, int y, int w, int h, const guiGridType_c * ggt, mainWindow_c * mw) : layouter_c(x, y, w, h), mw(mw) {
   tt = ggt->getToolTab(0, 0, 1, 1);
   tt->callback(cb_ToolTabContainer_stub, this);
+
+  if (mw) {
+    // --- 锁形 tab page ---
+    {
+      // Set current group to tt so new widgets become its children (tab pages)
+      Fl_Group::current(tt);
+
+      layouter_c * lockPage = new layouter_c(0, 1, 1, 1);
+      lockPage->label("锁形");
+
+      layouter_c * btnRow = new layouter_c(0, 0, 1, 1);
+      btnRow->weight(1, 1);
+
+      new LFlatButton_c(0, 0, 1, 1, "标准十字形", " 插入标准6柱十字形状 ", cb_lock_std_stub, (void*)mw);
+      (new LFl_Box(1, 0))->setMinimumSize(SZ_GAP, 0);
+      new LFlatButton_c(2, 0, 1, 1, "旋转前形状", " 插入旋转前形状 ", cb_lock_rot_stub, (void*)mw);
+      (new LFl_Box(3, 0, 1, 1))->weight(1, 0);
+
+      btnRow->end();
+      lockPage->end();
+      lockPage->hide();
+
+      Fl_Group::current(this);
+    }
+
+    // --- 石野码 tab page ---
+    {
+      Fl_Group::current(tt);
+
+      layouter_c * ishPage = new layouter_c(0, 1, 1, 1);
+      ishPage->label("石野码");
+
+      IshidaTabData_c * d = new IshidaTabData_c;
+      d->mw = mw;
+
+      // Row 0: 编码: + input field
+      (new LFl_Box("编码:", 0, 0, 1, 1))->labelsize(12);
+      d->inp = new LFl_Input(1, 0, 2, 1);
+      d->inp->value("1023");
+      d->inp->callback(cb_ishida_input, (void*)d);
+      d->inp->when(FL_WHEN_CHANGED);
+      (new LFl_Box(3, 0, 1, 1))->weight(1, 0);
+
+      // Row 1: 二进制: + output field
+      (new LFl_Box("二进制:", 0, 1, 1, 1))->labelsize(12);
+      d->binOut = new LFl_Output(1, 1, 3, 1);
+      d->updateBin();
+      (new LFl_Box(4, 1, 1, 1))->weight(1, 0);
+
+      // Row 2: preset buttons
+      (new LFl_Box(0, 2, 1, 1))->weight(1, 0);
+      Fl_Button * pb = new LFlatButton_c(1, 2, 1, 1, "实心柱(0)", "", cb_ishida_p0, (void*)d);
+      (new LFl_Box(2, 2, 0, 1))->setMinimumSize(SZ_GAP, 0);
+      pb = new LFlatButton_c(3, 2, 1, 1, "经典柱(1023)", "", cb_ishida_p1, (void*)d);
+      (new LFl_Box(4, 2, 1, 1))->weight(1, 0);
+
+      // Row 3: generate button (centered)
+      (new LFl_Box(0, 3, 1, 1))->weight(1, 0);
+      pb = new LFlatButton_c(1, 3, 2, 1, "生成柱子", " 根据编码生成2x2x6柱子 ", cb_ishida_gen, (void*)d);
+      (new LFl_Box(3, 3, 1, 1))->weight(1, 0);
+
+      ishPage->end();
+      ishPage->hide();
+
+      Fl_Group::current(this);
+    }
+  }
+
   end();
 }
 

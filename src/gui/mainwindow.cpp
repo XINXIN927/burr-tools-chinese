@@ -96,6 +96,7 @@
 #include <FL/fl_ask.H>
 #pragma GCC diagnostic pop
 
+#include <cstdio>
 #include <fstream>
 
 #ifdef _WIN32
@@ -125,6 +126,71 @@ bool fileExists(const char *n) {
     return false;
 }
 #endif
+
+/* ----- auto-save / crash recovery ----- */
+
+std::string mainWindow_c::getAutoSavePath(void) const {
+#ifdef _WIN32
+  const char * tmp = getenv("TEMP");
+  if (!tmp) tmp = ".";
+  return std::string(tmp) + "\\burrtools_autosave.xmpuzzle";
+#else
+  const char * tmp = getenv("TMPDIR");
+  if (!tmp) tmp = "/tmp";
+  return std::string(tmp) + "/burrtools_autosave.xmpuzzle";
+#endif
+}
+
+void mainWindow_c::autoSave(void) {
+  if (!changed) return;
+  std::string path = getAutoSavePath();
+  ogzstream ostr(path.c_str());
+  if (ostr) {
+    xmlWriter_c xml(ostr);
+    puzzle->save(xml);
+  }
+}
+
+void mainWindow_c::clearAutoSave(void) {
+  std::string path = getAutoSavePath();
+  std::remove(path.c_str());
+}
+
+void mainWindow_c::tryAutoSaveRecover(void) {
+  std::string path = getAutoSavePath();
+  if (!fileExists(path.c_str())) return;
+
+  int choice = fl_choice("检测到上次程序崩溃时未保存的拼图，是否恢复？",
+                          "取消", "恢复", "丢弃");
+  if (choice == 0) return;   // cancel — keep the auto-save file
+  if (choice == 2) {         // discard
+    clearAutoSave();
+    return;
+  }
+
+  // choice == 1 — recover
+  char * savedFname = fname;
+  fname = 0;
+  bool ok = tryToLoad(path.c_str());
+
+  if (ok) {
+    // tryToLoad set fname to the auto-save path; reset it to the original
+    if (fname) delete[] fname;
+    fname = savedFname;
+    changed = true;   // so the user is prompted to save-as
+    char nm[300];
+    if (fname)
+      snprintf(nm, 299, "鲁班锁 - %s", fname);
+    else
+      snprintf(nm, 299, "鲁班锁 - 未知");
+    label(nm);
+  } else {
+    if (fname) delete[] fname;
+    fname = savedFname;
+  }
+
+  clearAutoSave();
+}
 
 static void cb_AddColor_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_AddColor(); }
 void mainWindow_c::cb_AddColor(void) {
@@ -1385,6 +1451,7 @@ void mainWindow_c::cb_New(void) {
     }
 
     changed = false;
+    clearAutoSave();
 
     StatusLine->setText("");
     updateInterface();
@@ -1466,8 +1533,10 @@ void mainWindow_c::cb_Save(void) {
 
       if (!ostr)
         fl_alert("拼图未保存！！");
-      else
+      else {
         changed = false;
+        clearAutoSave();
+      }
     }
   }
 }
@@ -1619,6 +1688,74 @@ void mainWindow_c::cb_AssembliesToShapes(void) {
   }
 }
 
+void mainWindow_c::cb_InsertStdShape(void) {
+  const char * data = "_____________####__####_______________##____##___####__####___##____##____##__########################__##____##__########################__##____##____##___####__####___##____##_______________####__####_____________";
+
+  voxel_c * vx = puzzle->getGridType()->getVoxel(6, 6, 6, 0);
+
+  for (int i = 0; i < 216; i++)
+    vx->set(i, data[i] == '#' ? (voxel_type)voxel_c::VX_FILLED : (voxel_type)voxel_c::VX_EMPTY);
+
+  vx->setName("标准十字形");
+  vx->initHotspot();
+
+  unsigned int idx = puzzle->addShape(vx);
+  PcSel->setSelection(idx);
+
+  changed = true;
+  updateInterface();
+}
+
+void mainWindow_c::cb_InsertRotShape(void) {
+  const char * data = "_____________##_##_##_##______________##____##___###___#####__##____##____##__########################__##____##__########################__##____##____##___###___#####__##____##_______________##_##_##_##____________";
+
+  voxel_c * vx = puzzle->getGridType()->getVoxel(6, 6, 6, 0);
+
+  for (int i = 0; i < 216; i++)
+    vx->set(i, data[i] == '#' ? (voxel_type)voxel_c::VX_FILLED : (voxel_type)voxel_c::VX_EMPTY);
+
+  vx->setName("旋转前形状");
+  vx->initHotspot();
+
+  unsigned int idx = puzzle->addShape(vx);
+  PcSel->setSelection(idx);
+
+  changed = true;
+  updateInterface();
+}
+
+/* Position mapping for 石野码 12-bit encoding (2x2x6 piece):
+   1~4: (1,1,1..4)  上右1~4
+   5~8: (0,1,1..4)  上左1~4
+   9~10:(1,0,2..3)  下右前/后
+   11~12:(0,0,2..3) 下左前/后
+   LSB (bit 0) = position 1, MSB (bit 11) = position 12 */
+static const int ishidaPos[12][3] = {
+  {1,1,1},{1,1,2},{1,1,3},{1,1,4},
+  {0,1,1},{0,1,2},{0,1,3},{0,1,4},
+  {1,0,2},{1,0,3},{0,0,2},{0,0,3}
+};
+void mainWindow_c::cb_CreateIshidaPiece(int code) {
+
+  // Create 2x2x6 voxel space, initially all filled
+  voxel_c * vx = puzzle->getGridType()->getVoxel(2, 2, 6, (voxel_type)voxel_c::VX_FILLED);
+
+  // Apply 石野码: hollow positions where bits are set
+  for (int p = 0; p < 12; p++)
+    if (code & (1 << p))
+      vx->set(ishidaPos[p][0], ishidaPos[p][1], ishidaPos[p][2], (voxel_type)voxel_c::VX_EMPTY);
+
+  char nameBuf[32];
+  snprintf(nameBuf, sizeof(nameBuf), "%d", code);
+  vx->setName(nameBuf);
+  vx->initHotspot();
+
+  unsigned int idx = puzzle->addShape(vx);
+  PcSel->setSelection(idx);
+
+  changed = true;
+  updateInterface();
+}
 static void cb_SaveAs_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_SaveAs(); }
 void mainWindow_c::cb_SaveAs(void) {
 
@@ -1649,8 +1786,10 @@ void mainWindow_c::cb_SaveAs(void) {
 
         if (!ostr)
           fl_alert("拼图未保存！！！");
-        else
+        else {
           changed = false;
+          clearAutoSave();
+        }
 
         if (fname) delete [] fname;
         fname = new char[strlen(f2)+1];
@@ -1670,8 +1809,10 @@ void mainWindow_c::cb_SaveAs(void) {
 
 static void cb_Quit_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->hide(); }
 void mainWindow_c::hide(void) {
-  if ((!changed) || fl_choice("拼图已修改，是否退出并放弃更改？", "取消", "退出", 0))
+  if ((!changed) || fl_choice("拼图已修改，是否退出并放弃更改？", "取消", "退出", 0)) {
+    clearAutoSave();
     Fl_Double_Window::hide();
+  }
 }
 
 static void cb_Config_stub(Fl_Widget* /*o*/, void* v) { ((mainWindow_c*)v)->cb_Config(); }
@@ -1927,6 +2068,7 @@ bool mainWindow_c::tryToLoad(const char * f) {
   View3D->getView()->showColors(puzzle, StatusLine->getColorMode());
 
   changed = false;
+  clearAutoSave();
 
   // check for a started assemblies, and warn user about it
   bool containsStarted = false;
@@ -2036,6 +2178,8 @@ void mainWindow_c::show(int argn, char ** argv) {
       break;
     else
       arg++;
+
+  tryAutoSaveRecover();
 }
 
 void mainWindow_c::activateClear(void) {
@@ -2820,6 +2964,8 @@ void mainWindow_c::updateInterface(void) {
     }
   }
 
+  autoSave();
+
   TaskSelectionTab->redraw();
 }
 
@@ -3060,7 +3206,7 @@ void mainWindow_c::CreateShapeTab(void) {
     BtnShapeLeft =  new LFlatButton_c(12, 0, 1, 1, "@-14->", " Exchange current shape with previous shape ", cb_ShapeLeft_stub, this);
     (new LFl_Box(13, 0))->setMinimumSize(SZ_GAP, 0);
     BtnShapeRight = new LFlatButton_c(14, 0, 1, 1, "@-16->", " Exchange current shape with next shape ", cb_ShapeRight_stub, this);
-
+    (new LFl_Box(15, 0))->setMinimumSize(SZ_GAP, 0);
     o->end();
 
     (new LFl_Box(0, 2))->setMinimumSize(0, SZ_GAP);
@@ -3080,7 +3226,7 @@ void mainWindow_c::CreateShapeTab(void) {
 
     new LSeparator_c(0, 0, 1, 1, "编辑", true);
 
-    pieceTools = new ToolTabContainer(0, 1, 1, 1, ggt);
+    pieceTools = new ToolTabContainer(0, 1, 1, 1, ggt, this);
     pieceTools->callback(cb_TransformPiece_stub, this);
 
     (new LFl_Box(0, 2, 1, 1))->setMinimumSize(0, 5);
