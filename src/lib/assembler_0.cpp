@@ -517,8 +517,8 @@ int assembler_0_c::prepare(void) {
       mm * mirror = new mm[problem.getNumberOfPieces()];
 
       // first initialize
-      for (unsigned int i = 0; i < problem.getNumberOfParts(); i++) {
-        mirror[i].shape = i;
+      for (unsigned int i = 0; i < problem.getNumberOfPieces(); i++) {
+        mirror[i].shape = problem.getPartIdToPieceId(i);
         mirror[i].mirror = (unsigned int)-1;
         mirror[i].trans = 255;
       }
